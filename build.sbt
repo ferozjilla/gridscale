@@ -43,6 +43,9 @@ releaseTagComment    := s"Releasing ${(version in ThisBuild).value}"
 
 releaseCommitMessage := s"Bump version to ${(version in ThisBuild).value}"
 
+sonatypeProfileName := "fr.iscpif"
+
+
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
   inquireVersions,
@@ -113,7 +116,7 @@ lazy val scalaTest = "org.scalatest" %% "scalatest" % "3.0.1" % "test"
 /* -------------- gridscale dsl ------------------ */
 
 val effectasideVersion = "0.2"
-val monocleVersion = "1.4.0"
+val monocleVersion = "1.5.0"
 
 def dslSettings = defaultSettings ++ Seq(
   scalacOptions += "-Ypartial-unification",
@@ -123,7 +126,7 @@ def dslSettings = defaultSettings ++ Seq(
   libraryDependencies += "com.beachape" %% "enumeratum" % "1.5.12",
 
   addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.9.4"),
-  addCompilerPlugin("org.scalameta" % "paradise" % "3.0.0-M10" cross CrossVersion.full),
+  addCompilerPlugin("org.scalameta" % "paradise" % "3.0.0-M11" cross CrossVersion.full),
   scalacOptions += "-Xplugin-require:macroparadise",
 
   resolvers += Resolver.sonatypeRepo("snapshots"),
