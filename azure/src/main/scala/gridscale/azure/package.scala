@@ -1,13 +1,15 @@
 package gridscale
 
-import java.io.{ ByteArrayOutputStream, IOException }
+import java.io.{ ByteArrayOutputStream, File, FileInputStream, IOException }
 import java.security.InvalidKeyException
-import java.util
+import java.util.Date
 import java.util.concurrent.TimeoutException
 
 import com.microsoft.azure.batch.{ BatchClient, DetailLevel }
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials
 import com.microsoft.azure.batch.protocol.models._
+import com.microsoft.azure.storage.blob.CloudBlobContainer
+import com.microsoft.azure.storage.{ CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob }
 
 package object azure {
   // Get a batch client
@@ -84,6 +86,91 @@ package object azure {
     return client.poolOperations().getPool(poolId)
   }
 
+  import java.net.URISyntaxException
+
+  /**
+   * Create blob container in order to upload file
+   *
+   * @param storageAccountName storage account name
+   * @param storageAccountKey  storage account key
+   * @return CloudBlobContainer instance
+   * @throws URISyntaxException
+   * @throws StorageException
+   */
+  @throws[URISyntaxException]
+  @throws[StorageException]
+  private def createBlobContainer(storageAccountName: String, storageAccountKey: String): CloudBlobContainer = {
+    println("Creating a container for storage")
+
+    val CONTAINER_NAME = "poolsandresourcefiles"
+    // Create storage credential from name and key
+    val credentials = new StorageCredentialsAccountAndKey(storageAccountName, storageAccountKey)
+    // Create storage account
+    val storageAccount = new CloudStorageAccount(credentials)
+    // Create the blob client
+    val blobClient = storageAccount.createCloudBlobClient
+    // Get a reference to a container.
+    // The container name must be lower case
+    val container: CloudBlobContainer = blobClient.getContainerReference(CONTAINER_NAME)
+
+    println("Storage container created")
+
+    return container
+  }
+
+  import com.microsoft.azure.storage.StorageException
+  import com.microsoft.azure.storage.blob.CloudBlobContainer
+  import com.microsoft.azure.storage.blob.CloudBlockBlob
+  import com.microsoft.azure.storage.blob.SharedAccessBlobPermissions
+  import com.microsoft.azure.storage.blob.SharedAccessBlobPolicy
+  import java.io.IOException
+  import java.net.URISyntaxException
+  import java.util.Calendar
+  import java.util
+
+  /**
+   * Upload file to blob container and return sas key
+   *
+   * @param container blob container
+   * @param fileName  the file name of blob
+   * @param filePath  the local file path
+   * @return SAS key for the uploaded file
+   * @throws URISyntaxException
+   * @throws IOException
+   * @throws InvalidKeyException
+   * @throws StorageException
+   */
+  @throws[URISyntaxException]
+  @throws[IOException]
+  @throws[InvalidKeyException]
+  @throws[StorageException]
+  private def uploadFileToCloud(container: CloudBlobContainer, fileName: String, filePath: String): String = { // Create the container if it does not exist.
+    println("Uploading file " + filePath + " as " + fileName)
+    container.createIfNotExists
+    // Upload file
+    val blob = container.getBlockBlobReference(fileName)
+    val source = new File(filePath)
+    blob.upload(new FileInputStream(source), source.length)
+
+    // Create policy with 1 day read permission
+    val policy = new SharedAccessBlobPolicy
+    val perEnumSet = util.EnumSet.of(SharedAccessBlobPermissions.READ)
+    policy.setPermissions(perEnumSet)
+
+    val c = Calendar.getInstance
+    c.setTime(new Date)
+    c.add(Calendar.DATE, 1)
+    policy.setSharedAccessExpiryTime(c.getTime)
+
+    // Create SAS key
+    val sas = blob.generateSharedAccessSignature(policy, null)
+    val uri = blob.getUri + "?" + sas
+
+    println("Uploaded file with uri: " + uri)
+
+    return uri
+  }
+
   // Create job
   @throws(classOf[BatchErrorException])
   @throws(classOf[IOException])
@@ -100,9 +187,29 @@ package object azure {
   @throws(classOf[IOException])
   @throws(classOf[InvalidKeyException])
   def addTaskToJob(client: BatchClient, jobId: String, taskId: String): Unit = {
+    val BLOB_FILE_NAME = "sample.txt"
+    val LOCAL_FILE_PATH = "/Users/ferozjilla/workspace/gridscale/azure/" + BLOB_FILE_NAME
+
     println("Adding task " + taskId + " to job " + jobId)
+
+    // Create task
     val task: TaskAddParameter = new TaskAddParameter
-    task.withId(taskId).withCommandLine(String.format("echo idea2"))
+    task.withId(taskId).withCommandLine(String.format("cat " + BLOB_FILE_NAME))
+
+    // Create container, upload blob file to cloud storage
+    val STORAGE_ACCOUNT_NAME = sys.env("STORAGE_ACCOUNT_NAME")
+    val STORAGE_ACCOUNT_KEY = sys.env("STORAGE_ACCOUNT_KEY")
+    var container = createBlobContainer(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY)
+    val blobUri = uploadFileToCloud(container, BLOB_FILE_NAME, LOCAL_FILE_PATH)
+
+    // Associate blob file with task
+    val file = new ResourceFile
+    file.withFilePath(BLOB_FILE_NAME).withBlobSource(blobUri)
+    var files = new util.ArrayList[ResourceFile]
+    files.add(file)
+    task.withResourceFiles(files)
+
+    // Add task to job
     client.taskOperations().createTask(jobId, task)
   }
 

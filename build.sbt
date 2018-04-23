@@ -160,7 +160,8 @@ lazy val sge = Project(id = "sge", base = file("sge")) settings(dslSettings: _*)
 lazy val azure = Project(id = "azure", base = file("azure")) settings(dslSettings: _*) dependsOn(gridscale) settings (
   libraryDependencies += "com.microsoft.azure" % "azure-batch" % "3.1.0",
   libraryDependencies += "com.microsoft.rest" % "client-runtime" % "1.3.0",
-  libraryDependencies += "com.microsoft.azure" % "azure-client-runtime" % "1.3.0"
+  libraryDependencies += "com.microsoft.azure" % "azure-client-runtime" % "1.3.0",
+  libraryDependencies += "com.microsoft.azure" % "azure-storage" % "7.0.0"
 )
 
 
@@ -215,3 +216,4 @@ lazy val sshExample  = Project(id = "sshexample", base = file("examples/ssh")) s
 lazy val oarExample  = Project(id = "oarexample", base = file("examples/oar")) settings(exampleSettings: _*) dependsOn oar
 lazy val httpExample  = Project(id = "httpexample", base = file("examples/http")) settings(exampleSettings: _*) dependsOn http
 lazy val azureExample  = Project(id = "azureexample", base = file("examples/azure")) settings(exampleSettings: _*) dependsOn azure
+libraryDependencies += "com.microsoft.azure" % "azure-batch" % "3.1.0"
