@@ -1,11 +1,15 @@
 package gridscale.azure
 
-import java.io.{ ByteArrayOutputStream, OutputStream }
+import java.io.{ByteArrayOutputStream, IOException, OutputStream}
+import java.security.InvalidKeyException
 import java.util
+import java.util.concurrent.TimeoutException
 
 import com.microsoft.azure.batch.DetailLevel
 import com.microsoft.azure.batch.DetailLevel.Builder
 import com.microsoft.azure.batch.protocol.models._
+
+import scala.concurrent.TimeoutException
 
 object TestAzure extends App {
 
@@ -13,25 +17,32 @@ object TestAzure extends App {
   import com.microsoft.azure.batch.BatchClient;
   import com.microsoft.azure.batch.protocol.models.{ CloudPool, ImageReference, VirtualMachineConfiguration, PoolInformation }
 
-  val client: BatchClient = getBatchClient()
   val poolId = "pool-test"
   val jobId = "job-test"
   val taskId1 = "task-test-1"
   val taskId2 = "task-test-2"
   val taskId3 = "task-test-3"
 
-  createPoolIfNotExists(client, poolId)
-  createJob(client, poolId, jobId)
-  addTaskToJob(client, jobId, taskId1)
-  addTaskToJob(client, jobId, taskId2)
-  addTaskToJob(client, jobId, taskId3)
-  waitForJobCompletion(client, jobId, 1000)
-  printTaskOutput(client, jobId, taskId1)
-  printTaskOutput(client, jobId, taskId2)
-  printTaskOutput(client, jobId, taskId3)
-  deletePool(client, poolId)
+  try {
+    val client: BatchClient = getBatchClient()
+    createPoolIfNotExists(client, poolId)
+    createJob(client, poolId, jobId)
+    addTaskToJob(client, jobId, taskId1)
+    addTaskToJob(client, jobId, taskId2)
+    addTaskToJob(client, jobId, taskId3)
+    waitForJobCompletion(client, jobId, 1000)
+    printTaskOutput(client, jobId, taskId1)
+    printTaskOutput(client, jobId, taskId2)
+    printTaskOutput(client, jobId, taskId3)
+    deletePool(client, poolId)
+  } catch {
+    case batchError: BatchErrorException ⇒ printBatchError(batchError)
+    case error: Exception                ⇒ println("Exception! " + error.getMessage); error.printStackTrace()
+  }
 
   // Get a batch client
+  @throws(classOf[NoSuchElementException])
+  @throws(classOf[IllegalArgumentException])
   def getBatchClient(): BatchClient = {
     println("Creating Batch Client")
     val batchUri = sys.env("AZURE_BATCH_ENDPOINT")
@@ -42,6 +53,11 @@ object TestAzure extends App {
   }
 
   // Create a pool
+  @throws(classOf[InterruptedException])
+  @throws(classOf[TimeoutException])
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[IllegalArgumentException])
+  @throws(classOf[IOException])
   def createPoolIfNotExists(client: BatchClient, poolId: String): CloudPool = {
     println("Creating Pool: " + poolId)
     // Return pool if already exists
@@ -86,17 +102,21 @@ object TestAzure extends App {
 
     while (pool.allocationState() != AllocationState.STEADY) {
       if (timeElapsed > POOL_STEADY_TIMEOUT_IN_SECONDS) {
-        throw new Exception("Could not create the pool within time")
+        throw new TimeoutException("Could not create the pool within time")
       }
       pool = client.poolOperations().getPool(poolId)
       Thread.sleep(30 * 1000)
       timeElapsed = System.currentTimeMillis() - startTime
     }
 
+    // Return pool
     return client.poolOperations().getPool(poolId)
   }
 
   // Create job
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[IOException])
+  @throws(classOf[InvalidKeyException])
   def createJob(client: BatchClient, poolId: String, jobId: String): Unit = {
     println("Creating Job: " + jobId)
     val poolInfo = new PoolInformation
@@ -105,6 +125,9 @@ object TestAzure extends App {
   }
 
   // Add task to job
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[IOException])
+  @throws(classOf[InvalidKeyException])
   def addTaskToJob(client: BatchClient, jobId: String, taskId: String): Unit = {
     println("Adding task " + taskId + " to job " + jobId)
     val task: TaskAddParameter = new TaskAddParameter
@@ -113,14 +136,17 @@ object TestAzure extends App {
   }
 
   // Waits for all tasks in a job to complete
-  def waitForJobCompletion(client: BatchClient, jobId: String, expiryTimeInSeconds: Integer): Boolean = {
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[TimeoutException])
+  @throws(classOf[InterruptedException])
+  @throws(classOf[IOException])
+  def waitForJobCompletion(client: BatchClient, jobId: String, expiryTimeInSeconds: Integer): Unit = {
     println("Waiting for job to finish: " + jobId)
     val startTime = System.currentTimeMillis()
     var elapsedTime = 0L
 
     while (elapsedTime < expiryTimeInSeconds * 1000) {
       val tasks: util.List[CloudTask] = client.taskOperations().listTasks(jobId, new DetailLevel.Builder().withSelectClause("id, state").build())
-      println("Total tasks: " + tasks.size())
       var allComplete = true
       // TODO: What is a good Scala way for something like this
       for (i ← 0 until tasks.size()) {
@@ -130,20 +156,21 @@ object TestAzure extends App {
       }
 
       if (allComplete) {
-        println("All jobs complete")
-        return true
+        println("All jobs complete\n")
+        return
       }
 
       Thread.sleep(10 * 1000)
       elapsedTime = System.currentTimeMillis() - startTime
     }
 
-    return false
+    throw new TimeoutException("The tasks of the job " + jobId + "did not complete withing the given expiry time: " + expiryTimeInSeconds + "seconds")
   }
 
   // Get stdout and stderr
+  @throws(classOf[BatchErrorException])
   def printTaskOutput(client: BatchClient, jobId: String, taskId: String): Unit = {
-    println("Fetching stdout")
+    println("Fetching stdout for task " + taskId)
     var stream = new ByteArrayOutputStream
     val file = "stdout.txt"
     client.fileOperations().getFileFromTask(jobId, taskId, file, null, stream)
@@ -153,8 +180,25 @@ object TestAzure extends App {
   }
 
   // Delete pool
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[InterruptedException])
   def deletePool(client: BatchClient, poolId: String): Unit = {
     println("Deleting Pool: " + poolId)
     client.poolOperations().deletePool(poolId)
+  }
+
+  // Print batch error exceptions
+  def printBatchError(batchError: BatchErrorException) = {
+    println("Batch error: " + batchError.toString)
+    if (batchError.body() != null) {
+      println("Error code: " + batchError.body().code() + ", message: " + batchError.body().message().value())
+      if (batchError.body().values() != null) {
+        for (i ← 0 to batchError.body().values().size()) {
+          val detail = batchError.body().values().get(i)
+          println("detail: " + detail.key() + "=" + detail.value())
+        }
+      }
+    }
+
   }
 }
