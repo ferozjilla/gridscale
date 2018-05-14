@@ -12,6 +12,12 @@ import com.microsoft.azure.storage.blob.CloudBlobContainer
 import com.microsoft.azure.storage.{ CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob }
 
 package object azure {
+  // random job and pool name
+  val jobId = s"job-${java.util.UUID.randomUUID().toString}"
+  val poolId = s"pool-${java.util.UUID.randomUUID().toString}"
+  val taskRandom = s"task-${java.util.UUID.randomUUID().toString}"
+  var taskCount = 0
+
   // Get a batch client
   @throws(classOf[NoSuchElementException])
   @throws(classOf[IllegalArgumentException])
@@ -31,25 +37,20 @@ package object azure {
   @throws(classOf[BatchErrorException])
   @throws(classOf[IllegalArgumentException])
   @throws(classOf[IOException])
-  def createPoolIfNotExists(client: BatchClient, poolId: String): CloudPool = {
+  def createPoolIfNotExists(client: BatchClient, config: PoolConfiguration): CloudPool = {
+
     println("Creating Pool: " + poolId)
     // Return pool if already exists
     if (client.poolOperations().existsPool(poolId)) {
       return client.poolOperations().getPool(poolId)
     }
 
-    // Assume virtual machine properties
-    val POOL_DISPLAY_NAME = "Test Pool"
-    val POOL_VM_SIZE = "STANDARD_A1"
-    val POOL_VM_COUNT = 1
-    val POOL_OS_PUBLISHER = "Canonical"
-    val POOL_OS_OFFER = "UbuntuServer"
-    val POOL_SKUID = "16.04-LTS"
-    val POOL_STEADY_TIMEOUT_IN_SECONDS = 5 * 60 * 1000
-    val NODE_AGENT_SKUID = "batch.node.ubuntu 16.04"
+    val NODE_AGENT_SKUID = "batch.node.ubuntu 16.04" // TODO: get from os sku?
+    val POOL_NAME = "gridscale-pool" // TODO: randomly generate name
+    val POOL_STEADY_TIMEOUT_IN_MINUTES = 5 * 60 * 1000
 
     // Create a virtual machine configuration
-    val imgRef = new ImageReference().withOffer(POOL_OS_OFFER).withPublisher(POOL_OS_PUBLISHER).withSku(POOL_SKUID)
+    val imgRef = new ImageReference().withOffer(config.osOffer).withPublisher(config.osPublisher).withSku(config.osSku)
     val poolVMConfiguration = new VirtualMachineConfiguration()
       .withNodeAgentSKUId(NODE_AGENT_SKUID)
       .withImageReference(imgRef)
@@ -57,9 +58,9 @@ package object azure {
     // Create object with pool parameters
     val poolAddParameter: PoolAddParameter = new PoolAddParameter()
       .withId(poolId)
-      .withDisplayName(POOL_DISPLAY_NAME)
-      .withTargetDedicatedNodes(POOL_VM_COUNT)
-      .withVmSize(POOL_VM_SIZE)
+      .withDisplayName(POOL_NAME)
+      .withTargetDedicatedNodes(config.dedicatedNodes)
+      .withVmSize(config.vmSize)
       .withVirtualMachineConfiguration(poolVMConfiguration)
 
     // Create pool if it does not exist
@@ -74,7 +75,7 @@ package object azure {
     var pool: CloudPool = client.poolOperations().getPool(poolId)
 
     while (pool.allocationState() != AllocationState.STEADY) {
-      if (timeElapsed > POOL_STEADY_TIMEOUT_IN_SECONDS) {
+      if (timeElapsed > POOL_STEADY_TIMEOUT_IN_MINUTES) {
         throw new TimeoutException("Could not create the pool within time")
       }
       pool = client.poolOperations().getPool(poolId)
@@ -129,12 +130,11 @@ package object azure {
   import java.util
 
   /**
-   * Upload file to blob container and return sas key
+   * Upload file to cloud and return uri to identify the file as a cloud resource
    *
-   * @param container blob container
    * @param fileName  the file name of blob
-   * @param filePath  the local file path
-   * @return SAS key for the uploaded file
+   * @param localFilePath  the local file path
+   * @return Uri of the uploaded file
    * @throws URISyntaxException
    * @throws IOException
    * @throws InvalidKeyException
@@ -144,12 +144,17 @@ package object azure {
   @throws[IOException]
   @throws[InvalidKeyException]
   @throws[StorageException]
-  private def uploadFileToCloud(container: CloudBlobContainer, fileName: String, filePath: String): String = { // Create the container if it does not exist.
-    println("Uploading file " + filePath + " as " + fileName)
+  def uploadFileToCloud(fileName: String, localFilePath: String): String = {
+    // Create container, upload blob file to cloud storage
+    val STORAGE_ACCOUNT_NAME = sys.env("STORAGE_ACCOUNT_NAME")
+    val STORAGE_ACCOUNT_KEY = sys.env("STORAGE_ACCOUNT_KEY")
+    val container = createBlobContainer(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY)
+
+    println("Uploading file " + localFilePath + " as " + fileName)
     container.createIfNotExists
     // Upload file
     val blob = container.getBlockBlobReference(fileName)
-    val source = new File(filePath)
+    val source = new File(localFilePath)
     blob.upload(new FileInputStream(source), source.length)
 
     // Create policy with 1 day read permission
@@ -171,46 +176,65 @@ package object azure {
     return uri
   }
 
-  // Create job
   @throws(classOf[BatchErrorException])
   @throws(classOf[IOException])
   @throws(classOf[InvalidKeyException])
-  def createJob(client: BatchClient, poolId: String, jobId: String): Unit = {
-    println("Creating Job: " + jobId)
+  def submitTask(client: BatchClient, poolId: String, taskConfig: TaskConfiguration): String = {
+    // create a job for the task if it does not already exist
+    //if (client.jobOperations().getJob(jobId) == null) {
+    println("Creating job with jobId: " + jobId)
     val poolInfo = new PoolInformation
     poolInfo.withPoolId(poolId)
-    client.jobOperations.createJob(jobId, poolInfo)
-  }
+    client.jobOperations().createJob(jobId, poolInfo)
+    //}
 
-  // Add task to job
-  @throws(classOf[BatchErrorException])
-  @throws(classOf[IOException])
-  @throws(classOf[InvalidKeyException])
-  def addTaskToJob(client: BatchClient, jobId: String, taskId: String): Unit = {
-    val BLOB_FILE_NAME = "sample.txt"
-    val LOCAL_FILE_PATH = "/Users/ferozjilla/workspace/gridscale/azure/" + BLOB_FILE_NAME
-
+    var taskId = taskRandom + taskCount
+    taskCount += 1
+    //TODO: Upload resource files to cloud
     println("Adding task " + taskId + " to job " + jobId)
 
     // Create task
     val task: TaskAddParameter = new TaskAddParameter
-    task.withId(taskId).withCommandLine(String.format("cat " + BLOB_FILE_NAME))
-
-    // Create container, upload blob file to cloud storage
-    val STORAGE_ACCOUNT_NAME = sys.env("STORAGE_ACCOUNT_NAME")
-    val STORAGE_ACCOUNT_KEY = sys.env("STORAGE_ACCOUNT_KEY")
-    var container = createBlobContainer(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY)
-    val blobUri = uploadFileToCloud(container, BLOB_FILE_NAME, LOCAL_FILE_PATH)
-
-    // Associate blob file with task
-    val file = new ResourceFile
-    file.withFilePath(BLOB_FILE_NAME).withBlobSource(blobUri)
-    var files = new util.ArrayList[ResourceFile]
-    files.add(file)
-    task.withResourceFiles(files)
+    //String.format("cat " + BLOB_FILE_NAME)
+    task.withId(taskId).withCommandLine(taskConfig.cmdLine)
+    task.withResourceFiles(taskConfig.uploadFiles)
 
     // Add task to job
     client.taskOperations().createTask(jobId, task)
+
+    return taskId
+  }
+
+  // Waits for all tasks in a job to complete
+  @throws(classOf[BatchErrorException])
+  @throws(classOf[TimeoutException])
+  @throws(classOf[InterruptedException])
+  @throws(classOf[IOException])
+  def waitForTaskCompletion(client: BatchClient, taskId: String, expiryTimeInSeconds: Integer): Unit = {
+    println("Waiting for job to finish: " + jobId)
+    val startTime = System.currentTimeMillis()
+    var elapsedTime = 0L
+
+    while (elapsedTime < expiryTimeInSeconds * 1000) {
+      val tasks: util.List[CloudTask] = client.taskOperations().listTasks(jobId, new DetailLevel.Builder().withSelectClause("id, state").build())
+      var allComplete = true
+      // TODO: What is a good Scala way for something like this
+      for (i ← 0 until tasks.size()) {
+        if (tasks.get(i).state() != TaskState.COMPLETED) {
+          allComplete = false
+        }
+      }
+
+      if (allComplete) {
+        println("All jobs complete\n")
+        return
+      }
+
+      Thread.sleep(10 * 1000)
+      elapsedTime = System.currentTimeMillis() - startTime
+    }
+
+    throw new TimeoutException("The tasks of the job " + jobId + "did not complete withing the given expiry time: " + expiryTimeInSeconds + "seconds")
   }
 
   // Waits for all tasks in a job to complete
@@ -247,7 +271,7 @@ package object azure {
 
   // Get stdout and stderr
   @throws(classOf[BatchErrorException])
-  def printTaskOutput(client: BatchClient, jobId: String, taskId: String): Unit = {
+  def printTaskOutput(client: BatchClient, taskId: String): Unit = {
     println("Fetching stdout for task " + taskId)
     var stream = new ByteArrayOutputStream
     val file = "stdout.txt"
@@ -281,3 +305,14 @@ package object azure {
   }
 
 }
+
+case class PoolConfiguration(
+  //poolId: String,
+  osPublisher: String,
+  osOffer: String,
+  osSku: String,
+  vmSize: String,
+  dedicatedNodes: Int,
+  lowPriorityNodes: Int)
+
+case class TaskConfiguration(cmdLine: String, uploadFiles: java.util.ArrayList[ResourceFile])
