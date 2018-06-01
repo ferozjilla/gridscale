@@ -1,0 +1,19 @@
+compute_environment:
+  type: managed
+  state: enabled
+  name: "gridscale-env"
+  service_role: "arn:aws:iam::221957794548:role/service-role/AWSBatchServiceRole"
+  compute_resource:
+    type: EC2  # alternative is spot which is cheaper but does not guarentee availability
+    instance_type:
+      - optimal                         # alternative is to mention the exact instance types, eg:- c4xlarge, etc
+    min_vcpu: 0                         # cpus to maintain
+    max_vcpu: 100                       # max cpus
+    desired_vcpu: 10
+    instance_role: "ecsInstanceRole"
+    subnets:
+      - "subnet-61179108"
+      - "subnet-b6cb0acc"
+      - "subnet-3c6a7d71"
+    security_group_ids:
+      - "sg-3fe26c54"
