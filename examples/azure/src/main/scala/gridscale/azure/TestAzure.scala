@@ -1,10 +1,6 @@
 package gridscale.azure
 
-import java.io.{ File, FileInputStream }
-
-import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials
 import com.microsoft.azure.batch.protocol.models._
-import gridscale.{PoolConfiguration, TaskConfiguration}
 
 object TestAzure extends App {
 
@@ -15,9 +11,9 @@ object TestAzure extends App {
     val batchUri = sys.env("AZURE_BATCH_ENDPOINT")
     val batchAccount = sys.env("AZURE_BATCH_ACCOUNT")
     val batchKey = sys.env("AZURE_BATCH_ACCESS_KEY")
-    val credentials: BatchSharedKeyCredentials = new BatchSharedKeyCredentials(batchUri, batchAccount, batchKey)
+    val azureAuthentication: AzureBatchAuthentication = AzureBatchAuthentication(batchAccount, batchUri, batchKey)
 
-    val client = BatchClient.open(credentials)
+    val client = getBatchClient(azureAuthentication)
 
     // Create pool
     val POOL_DISPLAY_NAME = "Test Pool"
@@ -40,9 +36,15 @@ object TestAzure extends App {
     val pool = createPoolIfNotExists(client, poolConfig)
 
     // Upload file to Azure storage
+
+    val storageAccountName = sys.env("STORAGE_ACCOUNT_NAME")
+    val storageAccountKey = sys.env("STORAGE_ACCOUNT_KEY")
+
+    val azureStorageAuthentication: AzureStorageAuthentication =
+      AzureStorageAuthentication(storageAccountName, storageAccountKey)
     val fileToCat = "sample.txt"
     val LOCAL_FILE_PATH = "/Users/ferozjilla/workspace/gridscale/azure/" + fileToCat
-    val uri = uploadFileToCloud(fileName = fileToCat, localFilePath = LOCAL_FILE_PATH)
+    val uri = uploadFileToCloud(azureStorageAuthentication, fileName = fileToCat, localFilePath = LOCAL_FILE_PATH)
 
     // Link file to task
     val files = new java.util.ArrayList[ResourceFile]
@@ -61,7 +63,7 @@ object TestAzure extends App {
 
     val taskId = submitTask(client, pool.id(), taskConfig)
     waitForTaskCompletion(client, taskId, 1000)
-    printTaskOutput(client, jobId)
+    printTaskOutput(client, taskId)
     //deletePool(client, poolId)
   } catch {
     case batchError: BatchErrorException ⇒ printBatchError(batchError)

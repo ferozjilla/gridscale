@@ -8,29 +8,47 @@ import java.util.concurrent.TimeoutException
 import com.microsoft.azure.batch.{ BatchClient, DetailLevel }
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials
 import com.microsoft.azure.batch.protocol.models._
-import com.microsoft.azure.storage.blob.CloudBlobContainer
 import com.microsoft.azure.storage.{ CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob }
 
 package object azure {
+
+  case class AzureBatchAuthentication(batchAccountName: String, batchAccountUri: String, batchAccountKey: String)
+  case class AzureStorageAuthentication(storageAccountName: String, storageAccountKey: String)
+
+  case class PoolConfiguration(
+    osPublisher: String,
+    osOffer: String,
+    osSku: String,
+    vmSize: String,
+    dedicatedNodes: Int,
+    lowPriorityNodes: Int)
+
+  case class TaskConfiguration(cmdLine: String, resourceFiles: java.util.ArrayList[ResourceFile])
+
   // random job and pool name
   val jobId = s"job-${java.util.UUID.randomUUID().toString}"
   val poolId = s"pool-${java.util.UUID.randomUUID().toString}"
   val taskRandom = s"task-${java.util.UUID.randomUUID().toString}"
   var taskCount = 0
 
+/*** ---------------------------Authentication--------------------------- ***/
+
   // Get a batch client
   @throws(classOf[NoSuchElementException])
   @throws(classOf[IllegalArgumentException])
-  def getBatchClient(): BatchClient = {
+  def getBatchClient(azureAuthentication: AzureBatchAuthentication): BatchClient = {
+    // TODO: Create account if necessary?
     println("Creating Batch Client")
 
-    val batchUri = sys.env("AZURE_BATCH_ENDPOINT")
-    val batchAccount = sys.env("AZURE_BATCH_ACCOUNT")
-    val batchKey = sys.env("AZURE_BATCH_ACCESS_KEY")
-    val creds: BatchSharedKeyCredentials = new BatchSharedKeyCredentials(batchUri, batchAccount, batchKey)
+    val creds: BatchSharedKeyCredentials = new BatchSharedKeyCredentials(
+      azureAuthentication.batchAccountUri,
+      azureAuthentication.batchAccountName,
+      azureAuthentication.batchAccountKey)
+
     return BatchClient.open(creds)
   }
 
+/*** ---------------------------Resource Creation--------------------------- ***/
   // Create a pool
   @throws(classOf[InterruptedException])
   @throws(classOf[TimeoutException])
@@ -87,6 +105,63 @@ package object azure {
     return client.poolOperations().getPool(poolId)
   }
 
+/*** Storage - file upload ***/
+
+  import com.microsoft.azure.storage.StorageException
+  import com.microsoft.azure.storage.blob.CloudBlobContainer
+  import com.microsoft.azure.storage.blob.CloudBlockBlob
+  import com.microsoft.azure.storage.blob.SharedAccessBlobPermissions
+  import com.microsoft.azure.storage.blob.SharedAccessBlobPolicy
+  import java.io.IOException
+  import java.net.URISyntaxException
+  import java.util.Calendar
+  import java.util
+
+  /**
+   * Upload file to cloud and return uri to identify the file as a cloud resource
+   *
+   * @param fileName  the file name of blob
+   * @param localFilePath  the local file path
+   * @return Uri of the uploaded file
+   * @throws URISyntaxException
+   * @throws IOException
+   * @throws InvalidKeyException
+   * @throws StorageException
+   */
+  @throws[URISyntaxException]
+  @throws[IOException]
+  @throws[InvalidKeyException]
+  @throws[StorageException]
+  def uploadFileToCloud(azureStorageAuthentication: AzureStorageAuthentication, fileName: String, localFilePath: String): String = {
+    // Create container, upload blob file to cloud storage
+    val container = createBlobContainer(azureStorageAuthentication.storageAccountName, azureStorageAuthentication.storageAccountKey)
+
+    println("Uploading file " + localFilePath + " as " + fileName)
+    container.createIfNotExists
+    // Upload file
+    val blob = container.getBlockBlobReference(fileName)
+    val source = new File(localFilePath)
+    blob.upload(new FileInputStream(source), source.length)
+
+    // Create policy with 1 day read permission
+    val policy = new SharedAccessBlobPolicy
+    val perEnumSet = util.EnumSet.of(SharedAccessBlobPermissions.READ)
+    policy.setPermissions(perEnumSet)
+
+    val c = Calendar.getInstance
+    c.setTime(new Date)
+    c.add(Calendar.DATE, 1)
+    policy.setSharedAccessExpiryTime(c.getTime)
+
+    // Create SAS key
+    val sas = blob.generateSharedAccessSignature(policy, null)
+    val uri = blob.getUri + "?" + sas
+
+    println("Uploaded file with uri: " + uri)
+
+    return uri
+  }
+
   import java.net.URISyntaxException
 
   /**
@@ -119,74 +194,14 @@ package object azure {
     return container
   }
 
-  import com.microsoft.azure.storage.StorageException
-  import com.microsoft.azure.storage.blob.CloudBlobContainer
-  import com.microsoft.azure.storage.blob.CloudBlockBlob
-  import com.microsoft.azure.storage.blob.SharedAccessBlobPermissions
-  import com.microsoft.azure.storage.blob.SharedAccessBlobPolicy
-  import java.io.IOException
-  import java.net.URISyntaxException
-  import java.util.Calendar
-  import java.util
-
-  /**
-   * Upload file to cloud and return uri to identify the file as a cloud resource
-   *
-   * @param fileName  the file name of blob
-   * @param localFilePath  the local file path
-   * @return Uri of the uploaded file
-   * @throws URISyntaxException
-   * @throws IOException
-   * @throws InvalidKeyException
-   * @throws StorageException
-   */
-  @throws[URISyntaxException]
-  @throws[IOException]
-  @throws[InvalidKeyException]
-  @throws[StorageException]
-  def uploadFileToCloud(fileName: String, localFilePath: String): String = {
-    // Create container, upload blob file to cloud storage
-    val STORAGE_ACCOUNT_NAME = sys.env("STORAGE_ACCOUNT_NAME")
-    val STORAGE_ACCOUNT_KEY = sys.env("STORAGE_ACCOUNT_KEY")
-    val container = createBlobContainer(STORAGE_ACCOUNT_NAME, STORAGE_ACCOUNT_KEY)
-
-    println("Uploading file " + localFilePath + " as " + fileName)
-    container.createIfNotExists
-    // Upload file
-    val blob = container.getBlockBlobReference(fileName)
-    val source = new File(localFilePath)
-    blob.upload(new FileInputStream(source), source.length)
-
-    // Create policy with 1 day read permission
-    val policy = new SharedAccessBlobPolicy
-    val perEnumSet = util.EnumSet.of(SharedAccessBlobPermissions.READ)
-    policy.setPermissions(perEnumSet)
-
-    val c = Calendar.getInstance
-    c.setTime(new Date)
-    c.add(Calendar.DATE, 1)
-    policy.setSharedAccessExpiryTime(c.getTime)
-
-    // Create SAS key
-    val sas = blob.generateSharedAccessSignature(policy, null)
-    val uri = blob.getUri + "?" + sas
-
-    println("Uploaded file with uri: " + uri)
-
-    return uri
-  }
-
   @throws(classOf[BatchErrorException])
   @throws(classOf[IOException])
   @throws(classOf[InvalidKeyException])
   def submitTask(client: BatchClient, poolId: String, taskConfig: TaskConfiguration): String = {
-    // create a job for the task if it does not already exist
-    //if (client.jobOperations().getJob(jobId) == null) {
     println("Creating job with jobId: " + jobId)
     val poolInfo = new PoolInformation
     poolInfo.withPoolId(poolId)
     client.jobOperations().createJob(jobId, poolInfo)
-    //}
 
     var taskId = taskRandom + taskCount
     taskCount += 1
@@ -197,7 +212,7 @@ package object azure {
     val task: TaskAddParameter = new TaskAddParameter
     //String.format("cat " + BLOB_FILE_NAME)
     task.withId(taskId).withCommandLine(taskConfig.cmdLine)
-    task.withResourceFiles(taskConfig.uploadFiles)
+    task.withResourceFiles(taskConfig.resourceFiles)
 
     // Add task to job
     client.taskOperations().createTask(jobId, task)
@@ -306,13 +321,3 @@ package object azure {
 
 }
 
-case class PoolConfiguration(
-  //poolId: String,
-  osPublisher: String,
-  osOffer: String,
-  osSku: String,
-  vmSize: String,
-  dedicatedNodes: Int,
-  lowPriorityNodes: Int)
-
-case class TaskConfiguration(cmdLine: String, uploadFiles: java.util.ArrayList[ResourceFile])
