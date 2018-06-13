@@ -227,3 +227,16 @@ lazy val azureExample  = Project(id = "azureexample", base = file("examples/azur
 lazy val awsExample  = Project(id = "awsexample", base = file("examples/aws")) settings(exampleSettings: _*) dependsOn aws
 libraryDependencies += "com.microsoft.azure" % "azure-batch" % "3.1.0"
 lazy val localExample  = Project(id = "localexample", base = file("examples/local")) settings(exampleSettings: _*) dependsOn (local, cluster)
+
+/* -------------- benchmark ------------------ */
+
+lazy val benchmarkSettings = defaultSettings ++ exportSettings
+//++ Seq(
+//  mainClass in SbtOneJar.oneJar := Some("fr.iscpif.gridscale.benchmark.Main")
+//)
+
+lazy val utilBenchmark = Project(id = "utilbenchmark", base = file("benchmark/util")) settings  (benchmarkSettings: _*) dependsOn cluster
+lazy val condorBenchmark = Project(id = "condorbenchmark", base = file("benchmark/condor")) settings (benchmarkSettings: _*) dependsOn (condor, utilBenchmark)
+lazy val pbsBenchmark = Project(id = "pbsbenchmark", base = file("benchmark/pbs")) settings (benchmarkSettings: _*) dependsOn (pbs, utilBenchmark)
+lazy val slurmBenchmark = Project(id = "slurmbenchmark", base = file("benchmark/slurm")) settings (benchmarkSettings: _*) dependsOn (slurm, utilBenchmark)
+//lazy val diracBenchmark   = Project(id = "diracbenchmark", base = file("benchmark/egi/dirac")) settings (benchmarkSettings: _*) dependsOn (egi, utilBenchmark)
