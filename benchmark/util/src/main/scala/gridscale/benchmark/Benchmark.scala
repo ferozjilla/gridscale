@@ -17,42 +17,54 @@
 
 package gridscale.benchmark
 
-import gridscale.benchmark.util.Time.withTimer
+import java.io.File
+
+import gridscale.benchmark.util.Time.{ TimedResult, withTimer }
 import gridscale.cluster.BatchScheduler.BatchJob
 import gridscale.cluster.HeadNode
 
-trait Benchmark[S, D] {
-  def submit(server: S, jobDescription: D): BatchJob
-  def state(server: S, job: BatchJob): gridscale.JobState
-  def clean(server: S, job: BatchJob): Unit
+trait Benchmark[D] {
+  def submit(jobDescription: D): BatchJob
+  def state(job: BatchJob): gridscale.JobState
+  def clean(job: BatchJob): Unit
 }
 
 object Benchmark {
 
-  def benchmark[S, D](server: S)(jobDescription: D, nbJobs: Int, missingValue: Double = -1.0)(implicit hn: HeadNode[S], bench: Benchmark[S, D]) = {
+  def benchmark[S, D](server: S)(jobDescription: D, nbJobs: Int, missingValue: Double = -1.0)(implicit hn: HeadNode[S], bench: Benchmark[D]) = {
 
     import bench._
 
     println("Submitting jobs...")
     val (jobs, submitTime) = withTimer {
-      for (_ ← 1 to nbJobs) yield submit(server, jobDescription)
-    }.getOrElse(Seq.empty, missingValue)
+      for (_ ← 1 to nbJobs) yield submit(jobDescription)
+    } match {
+      case TimedResult(Some(x), t) ⇒ (x, t)
+      case TimedResult(None, _)    ⇒ (Seq.empty, missingValue)
+    }
 
     println(s"Submitted $nbJobs jobs in $submitTime")
 
     println("Querying state for jobs...")
 
     val (states, queryTime) = withTimer {
-      for (job ← jobs) yield state(server, job)
-    }.getOrElse(Seq.empty, missingValue)
+      for (job ← jobs) yield state(job)
+    } match {
+      case TimedResult(Some(x), t) ⇒ (x, t)
+      case TimedResult(None, _)    ⇒ (Seq.empty, missingValue)
+    }
 
     println(s"Queried state for ${states.length} jobs in $queryTime")
 
     println("Cancelling jobs...")
 
     val (_, cancelTime) = withTimer {
-      for (job ← jobs) yield clean(server, job)
-    }.getOrElse(Seq.empty, missingValue)
+      for (job ← jobs) yield clean(job)
+    } match {
+      case TimedResult(Some(x), t) ⇒ (x, t)
+      // cancel can excpetion due to missing files => disregard and still account elapsed time
+      case TimedResult(None, t)    ⇒ (Seq.empty, t)
+    }
 
     println(s"Cancelled $nbJobs jobs in $cancelTime")
 
@@ -63,7 +75,7 @@ object Benchmark {
 
   case class BenchmarkResults(avgSubmit: Double, avgState: Double, avgCancel: Double)
 
-  def avgBenchmark[S, D](server: S)(jobDescription: D, nbJobs: Int, runs: Int, missingValue: Double = -1.0)(implicit hn: HeadNode[S], bench: Benchmark[S, D]) = {
+  def avgBenchmark[S, D](server: S)(jobDescription: D, nbJobs: Int, runs: Int, missingValue: Double = -1.0)(implicit hn: HeadNode[S], bench: Benchmark[D]) = {
 
     val res = for (_ ← 1 to runs) yield benchmark(server)(jobDescription, nbJobs)
 
