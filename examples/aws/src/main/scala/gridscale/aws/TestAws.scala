@@ -9,7 +9,7 @@ import com.amazonaws.auth.{ AWSCredentials, AWSCredentialsProvider }
 import com.amazonaws.services.apigateway.model.GetSdkResult
 import com.amazonaws.services.batch.model._
 import com.amazonaws.services.batch.{ AWSBatch, AWSBatchClientBuilder }
-import com.amazonaws.services.ecr.model.{ CreateRepositoryRequest, CreateRepositoryResult, GetAuthorizationTokenRequest, GetAuthorizationTokenResult }
+import com.amazonaws.services.ecr.model._
 import com.amazonaws.services.ecr.{ AmazonECR, AmazonECRClient, AmazonECRClientBuilder }
 import com.amazonaws.services.s3.model._
 import com.amazonaws.services.s3.{ AmazonS3, AmazonS3ClientBuilder }
@@ -20,17 +20,23 @@ object TestAws extends App {
 
 /*** Authentication ***/
   // The user will supply these values
-  val secretAccessKey: String = sys.env("AWS_SECRET_ACCESS_KEY")
-  val accessKeyId: String = sys.env("AWS_ACCESS_KEY_ID")
+  val secretAccessKey: String = "4mj3jqVweXk9QK70SbyB1CkvxiJtDoYDPuCIEJnY"
+  val accessKeyId: String = "AKIAJZEQSO7B54OPVDRA"
   //TODO: Set a region that is close to the user for best network performance
   val awsRegion: String = "eu-west-2" // This datacenter is in London! ^.^
 
-  // Constants for names
-  val num: Int = 24
-  val JobDefinitionName = s"gridscale-job-def-$num"
-  val JobName = s"gridscale-job-$num"
-  val ComputeEnvName = s"gridscale-env-$num"
-  val JobQueueName = s"gridscale-job-queue-$num"
+  //val secretAccessKey: String = sys.env("AWS_SECRET_ACCESS_KEY")
+  //val accessKeyId: String = sys.env("AWS_ACCESS_KEY_ID")
+  ////TODO: Set a region that is close to the user for best network performance
+
+  //val awsRegion: String = sys.env("AWS_REGION") // This datacenter is in London! ^.^
+  // create an id for the job
+  val jobUUID: String = s"${java.util.UUID.randomUUID().toString}".substring(0, 5)
+
+  val JobDefinitionName = s"gridscale-job-def-$jobUUID"
+  val JobName = s"gridscale-job-$jobUUID"
+  val ComputeEnvName = s"gridscale-env-$jobUUID"
+  val JobQueueName = s"gridscale-job-queue-$jobUUID"
 
   val credentialsProvider: AWSCredentialsProvider = new AWSCredentialsProvider {
     override def getCredentials: AWSCredentials = new AWSCredentials {
@@ -45,10 +51,12 @@ object TestAws extends App {
 /*** ------------------------------Create S3 Client------------------------------ ***/
   val s3Client: AmazonS3 = AmazonS3ClientBuilder.standard().withRegion(awsRegion).withCredentials(credentialsProvider).build()
 
+/*** ------------------------------Create ECR Client------------------------------ ***/
+  val ecrClient: AmazonECR = AmazonECRClientBuilder.standard().withRegion(awsRegion).withCredentials(credentialsProvider).build()
+
 /***  ------------------------------Upload Input Files------------------------------ ***/
   // bucket to upload files into
   // TODO: Create a bucket identified by task
-  val jobUUID: String = s"${java.util.UUID.randomUUID().toString}"
   println("Creating job with UUID " + jobUUID)
   val bucketName: String = s"bucket-$jobUUID"
   print(s"Creating bucket with name $bucketName...")
@@ -72,18 +80,24 @@ object TestAws extends App {
 
   //TODO: Generate the script string dynamically
   val runScriptString: String =
-    s"""
-      |#!/bin/bash
-      |
-      |aws s3 cp s3://$bucketName/$fileName .
-      |
-      |$cmd > $fileName.output
-      |
-      |aws s3 cp $fileName.output s3://$bucketName/$fileName.output
-    """.stripMargin
+    s"""|#!/bin/bash
+       |
+       |aws s3 cp s3://$bucketName/$fileName .
+       |
+       |$cmd > $fileName.output
+       |
+       |aws s3 cp $fileName.output s3://$bucketName/$fileName.output
+  """.stripMargin
 
   //TODO: File error handling?
+  //TODO: Make the run script executable
   writeFile(runScriptFileName, runScriptString)
+  val chmodCmd: String = s"chmod u+x $runScriptFileName"
+  val chmodResult: Int = chmodCmd.!
+  if (chmodResult != 0) {
+    println("Error in changing file permissions for the run script " + runScriptFileName)
+    sys.exit(1)
+  }
   println("done")
 
 /*** ------------------------------Write Dockerfile------------------------------ ***/
@@ -94,15 +108,15 @@ object TestAws extends App {
   // A dockerfile that will allow us to call the script above from the batch job
   val dockerFileString: String =
     s"""
-      |FROM amazonlinux:latest
-      |
-      |RUN yum -y install unzip aws-cli
-      |ADD $runScriptFileName /usr/local/bin/$runScriptFileName
-      |WORKDIR /tmp
-      |USER nobody
-      |
-      |ENTRYPOINT ["/usr/local/bin/$runScriptFileName"]
-    """.stripMargin
+       |FROM amazonlinux:latest
+       |
+    |RUN yum -y install unzip aws-cli
+       |ADD $runScriptFileName /usr/local/bin/$runScriptFileName
+       |WORKDIR /tmp
+       |USER nobody
+       |
+    |ENTRYPOINT ["/usr/local/bin/$runScriptFileName"]
+  """.stripMargin
 
   //TODO: File error handling?
   writeFile(dockerFileName, dockerFileString)
@@ -121,11 +135,8 @@ object TestAws extends App {
   }
   println("done")
 
-/*** ------------------------------Create ECR Client------------------------------ ***/
-  val ecrClient: AmazonECR = AmazonECRClientBuilder.standard().withRegion(awsRegion).withCredentials(credentialsProvider).build()
-
   //TODO: Check if a repo has previously been created
-  val repositoryName: String = "awsbatch/test_repo_1"
+  val repositoryName: String = s"awsbatch/source_$jobUUID"
   print(s"Creating ECR registry named $repositoryName...")
   val createRepositoryRequest: CreateRepositoryRequest = new CreateRepositoryRequest().withRepositoryName(repositoryName)
   val createRepositoryResult: CreateRepositoryResult = ecrClient.createRepository(createRepositoryRequest)
@@ -162,7 +173,7 @@ object TestAws extends App {
     println("[docker tag] " + dockerTagCmd + " failed with exit code " + dockerTagExitCode)
     sys.exit(1)
   }
-  print("done")
+  println("done")
 
   println("Pushing docker image to ECR...")
   val dockerPushCmd: String = s"docker push $repositoryUri:latest"
@@ -170,8 +181,34 @@ object TestAws extends App {
   println(dockerPushResult)
   println("done")
 
+  //TODO: Create a role that allows access to s3 and get it's arn
+  //This has been done manually for now under the role: "s3-accessor"
+  val jobRoleArn: String = "arn:aws:iam::221957794548:role/s3-accessor"
+
+  //val batchGetImageRequest: BatchGetImageRequest = new BatchGetImageRequest().withRepositoryName("awsbatch/test_repo_1")
+  //val batchGetImageResult: BatchGetImageResult = ecrClient.batchGetImage(batchGetImageRequest)
+
 /*** ------------------------------Create Batch Client------------------------------ ***/
+
   val batchClient: AWSBatch = AWSBatchClientBuilder.standard().withRegion(awsRegion).withCredentials(credentialsProvider).build()
+
+/*** ------------------------------Create Job Definition------------------------------ ***/
+  val jobDefRequest: RegisterJobDefinitionRequest = new RegisterJobDefinitionRequest()
+    .withJobDefinitionName(JobDefinitionName)
+    .withType(JobDefinitionType.Container)
+    .withContainerProperties(new ContainerProperties()
+      .withJobRoleArn(jobRoleArn)
+      .withImage(repositoryUri) // Image containing script to download s3 data
+      .withVcpus(1) // Number of CPUs
+      .withMemory(2000) // Memory in Megabytes
+      .withCommand("cat", fileName)
+    // Maybe somewhere here will be the link to storage?
+    //.withVolumes(new Volume().)
+    )
+
+  print(s"Creating job definition $JobDefinitionName...")
+  val jobDefResult: RegisterJobDefinitionResult = batchClient.registerJobDefinition(jobDefRequest)
+  println("done")
 
 /*** ------------------------------Create Compute Environment------------------------------ ***/
   val computeResource: ComputeResource = new ComputeResource()
@@ -201,22 +238,9 @@ object TestAws extends App {
     .withServiceRole("arn:aws:iam::221957794548:role/service-role/AWSBatchServiceRole")
     .withState(CEState.ENABLED)
 
+  print(s"Creating compute environment $ComputeEnvName...")
   val computeEnvResult: CreateComputeEnvironmentResult = batchClient.createComputeEnvironment(computeEnvRequest)
-
-/*** ------------------------------Create Job Definition------------------------------ ***/
-  val jobDefRequest: RegisterJobDefinitionRequest = new RegisterJobDefinitionRequest()
-    .withJobDefinitionName(JobDefinitionName)
-    .withType(JobDefinitionType.Container)
-    .withContainerProperties(new ContainerProperties()
-      .withImage("amazonlinux") // Image to
-      .withVcpus(1) // Number of CPUs
-      .withMemory(2000) // Memory in Megabytes
-      .withCommand("echo", "hello world")
-    // Maybe somewhere here will be the link to storage?
-    //.withVolumes(new Volume().)
-    )
-
-  val jobDefResult: RegisterJobDefinitionResult = batchClient.registerJobDefinition(jobDefRequest)
+  println("done")
 
 /*** ------------------------------Create Job Queue------------------------------ ***/
   val createJobQueueRequest: CreateJobQueueRequest = new CreateJobQueueRequest()
@@ -229,7 +253,9 @@ object TestAws extends App {
   // Queue creation depends on environment being ready
 
   Thread.sleep(5 * 1000)
+  print(s"Creating job queue $JobQueueName...")
   val createJobQueueResult: CreateJobQueueResult = batchClient.createJobQueue(createJobQueueRequest)
+  println("done")
 
 /*** ------------------------------Submit Job------------------------------ ***/
 
@@ -239,14 +265,17 @@ object TestAws extends App {
     .withJobQueue(JobQueueName)
 
   Thread.sleep(5 * 1000)
+  print(s"Submitting Job $JobName...")
   val submitJobResult: SubmitJobResult = batchClient.submitJob(submitJobRequest)
   val jobId: String = submitJobResult.getJobId
+  println("done. Job has AWS ID: " + jobId)
 
 /*** Get Job Result ***/
-  //val describeJobsRequest: DescribeJobsRequest = new DescribeJobsRequest().withJobs(jobId)
-
-  //val describeJobsResult: DescribeJobsResult = batchClient.describeJobs(describeJobsRequest)
-  //val jobStatus = describeJobsResult.getJobs().get(0).getStatus
+  val describeJobsRequest: DescribeJobsRequest = new DescribeJobsRequest().withJobs(jobId)
+  print("Getting job result...")
+  val describeJobsResult: DescribeJobsResult = batchClient.describeJobs(describeJobsRequest)
+  val jobStatus = describeJobsResult.getJobs().get(0).getStatus
+  println(jobStatus)
 
 /*** ------------------------------Utilities------------------------------ ***/
   private def writeFile(fileName: String, fileContents: String): Unit = {

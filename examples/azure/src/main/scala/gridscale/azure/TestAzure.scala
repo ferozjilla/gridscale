@@ -33,7 +33,9 @@ object TestAzure extends App {
       vmSize = POOL_VM_SIZE,
       dedicatedNodes = POOL_VM_COUNT,
       lowPriorityNodes = 0)
+    print("Creating pool...")
     val pool = createPoolIfNotExists(client, poolConfig)
+    println("done")
 
     // Upload file to Azure storage
 
@@ -44,7 +46,9 @@ object TestAzure extends App {
       AzureStorageAuthentication(storageAccountName, storageAccountKey)
     val fileToCat = "sample.txt"
     val LOCAL_FILE_PATH = "/Users/ferozjilla/workspace/gridscale/azure/" + fileToCat
+    print("Uploading file to Azure storage...")
     val uri = uploadFileToCloud(azureStorageAuthentication, fileName = fileToCat, localFilePath = LOCAL_FILE_PATH)
+    println("done")
 
     // Link file to task
     val files = new java.util.ArrayList[ResourceFile]
