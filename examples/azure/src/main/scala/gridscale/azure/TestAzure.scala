@@ -25,7 +25,7 @@ object TestAzure extends App {
     val POOL_STEADY_TIMEOUT_IN_SECONDS = 5 * 60 * 1000
     val NODE_AGENT_SKUID = "batch.node.ubuntu 16.04"
 
-    val poolConfig = PoolConfiguration(
+    val poolConfig = AzurePoolConfiguration(
       //poolId = poolId,
       osPublisher = POOL_OS_PUBLISHER,
       osOffer = POOL_OS_OFFER,
@@ -57,7 +57,7 @@ object TestAzure extends App {
     files.add(file)
     //task.withResourceFiles(files)
 
-    val taskConfig = TaskConfiguration(
+    val taskConfig = AzureTaskConfiguration(
       s"cat ${fileToCat}",
       files, // Collection of {fileName, filePath}, get uploaded, uri figured.
       // TODO: key value pairs - environmentVars

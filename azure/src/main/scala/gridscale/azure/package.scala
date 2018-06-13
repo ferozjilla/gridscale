@@ -1,21 +1,24 @@
 package gridscale
 
-import java.io.{ ByteArrayOutputStream, File, FileInputStream, IOException }
+import java.io.{ByteArrayOutputStream, File, FileInputStream, IOException}
 import java.security.InvalidKeyException
 import java.util.Date
 import java.util.concurrent.TimeoutException
 
-import com.microsoft.azure.batch.{ BatchClient, DetailLevel }
+import com.microsoft.azure.AzureClient
+import com.microsoft.azure.batch.{BatchClient, DetailLevel}
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials
 import com.microsoft.azure.batch.protocol.models._
-import com.microsoft.azure.storage.{ CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob }
+import com.microsoft.azure.storage.{CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob}
+import gridscale.JobState.Submitted
+import gridscale.cluster.BatchScheduler.BatchJob
 
 package object azure {
 
   case class AzureBatchAuthentication(batchAccountName: String, batchAccountUri: String, batchAccountKey: String)
   case class AzureStorageAuthentication(storageAccountName: String, storageAccountKey: String)
 
-  case class PoolConfiguration(
+  case class AzurePoolConfiguration(
     osPublisher: String,
     osOffer: String,
     osSku: String,
@@ -23,7 +26,9 @@ package object azure {
     dedicatedNodes: Int,
     lowPriorityNodes: Int)
 
-  case class TaskConfiguration(cmdLine: String, resourceFiles: java.util.ArrayList[ResourceFile])
+  case class AzureTaskConfiguration(cmdLine: String, resourceFiles: java.util.ArrayList[ResourceFile])
+
+  case class AzureJobDescription(poolConfig: AzurePoolConfiguration, taskConfig: AzureTaskConfiguration)
 
   // random job and pool name
   val jobId = s"job-${java.util.UUID.randomUUID().toString}"
@@ -55,7 +60,7 @@ package object azure {
   @throws(classOf[BatchErrorException])
   @throws(classOf[IllegalArgumentException])
   @throws(classOf[IOException])
-  def createPoolIfNotExists(client: BatchClient, config: PoolConfiguration): CloudPool = {
+  def createPoolIfNotExists(client: BatchClient, config: AzurePoolConfiguration): CloudPool = {
 
     println("Creating Pool: " + poolId)
     // Return pool if already exists
@@ -194,10 +199,39 @@ package object azure {
     return container
   }
 
+  // should return a BatchJob
+  def submit(client: BatchClient, jobDescription: AzureJobDescription): BatchJob = {
+    val uniqId = s"job-${java.util.UUID.randomUUID()}"
+    // create pool
+    val pool: CloudPool = createPoolIfNotExists(client, jobDescription.poolConfig)
+    val taskId = submitTask(client, pool.id(), jobDescription.taskConfig)
+
+    BatchJob(uniqId, taskId, "")
+  }
+
+  // TODO: Think
+  def toGridscaleState(azureTaskState: TaskState): gridscale.JobState = {
+    var jobState: gridscale.JobState = Submitted
+    if (azureTaskState == TaskState.RUNNING) {
+      jobState = gridscale.JobState.Running
+    }
+    if (azureTaskState == TaskState.PREPARING) {
+      jobState = gridscale.JobState.Running
+    }
+    if (azureTaskState == TaskState.COMPLETED) {
+      jobState = gridscale.JobState.Done
+    }
+    if (azureTaskState == TaskState.ACTIVE) {
+      jobState = gridscale.JobState.Submitted
+    }
+
+    jobState
+  }
+
   @throws(classOf[BatchErrorException])
   @throws(classOf[IOException])
   @throws(classOf[InvalidKeyException])
-  def submitTask(client: BatchClient, poolId: String, taskConfig: TaskConfiguration): String = {
+  def submitTask(client: BatchClient, poolId: String, taskConfig: AzureTaskConfiguration): String = {
     println("Creating job with jobId: " + jobId)
     val poolInfo = new PoolInformation
     poolInfo.withPoolId(poolId)

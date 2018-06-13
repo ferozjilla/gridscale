@@ -164,7 +164,7 @@ lazy val aws = Project(id = "aws", base = file("aws")) settings(dslSettings: _*)
   libraryDependencies += "com.amazonaws" % "aws-java-sdk"  % "1.11.338"
 )
 
-lazy val azure = Project(id = "azure", base = file("azure")) settings(dslSettings: _*) dependsOn(gridscale) settings (
+lazy val azure = Project(id = "azure", base = file("azure")) settings(dslSettings: _*) dependsOn(gridscale, cluster) settings (
   libraryDependencies += "com.microsoft.azure" % "azure-batch" % "3.1.0",
   libraryDependencies += "com.microsoft.rest" % "client-runtime" % "1.3.0",
   libraryDependencies += "com.microsoft.azure" % "azure-client-runtime" % "1.3.0",
