@@ -199,33 +199,41 @@ package object azure {
     return container
   }
 
-  // should return a BatchJob
+  trait Benchmark[D] {
+    def submit(jobDescription: D): BatchJob
+    def state(job: BatchJob): gridscale.JobState
+    def clean(job: BatchJob): Unit
+  }
+
   def submit(client: BatchClient, jobDescription: AzureJobDescription): BatchJob = {
-    val uniqId = s"job-${java.util.UUID.randomUUID()}"
     // create pool
+    val uniqId: String = s"${java.util.UUID.randomUUID()}"
     val pool: CloudPool = createPoolIfNotExists(client, jobDescription.poolConfig)
     val taskId = submitTask(client, pool.id(), jobDescription.taskConfig)
 
     BatchJob(uniqId, taskId, "")
   }
 
-  // TODO: Think
   def toGridscaleState(azureTaskState: TaskState): gridscale.JobState = {
-    var jobState: gridscale.JobState = Submitted
-    if (azureTaskState == TaskState.RUNNING) {
-      jobState = gridscale.JobState.Running
+    azureTaskState match {
+      case TaskState.RUNNING   ⇒ gridscale.JobState.Running
+      case TaskState.PREPARING ⇒ gridscale.JobState.Running
+      case TaskState.COMPLETED ⇒ gridscale.JobState.Done
+      case TaskState.ACTIVE    ⇒ gridscale.JobState.Submitted
     }
-    if (azureTaskState == TaskState.PREPARING) {
-      jobState = gridscale.JobState.Running
-    }
-    if (azureTaskState == TaskState.COMPLETED) {
-      jobState = gridscale.JobState.Done
-    }
-    if (azureTaskState == TaskState.ACTIVE) {
-      jobState = gridscale.JobState.Submitted
-    }
+  }
 
-    jobState
+  def state(client: BatchClient, job: BatchJob): gridscale.JobState = {
+    //JOB ID MAY GO HORRIBLY WRONG
+    val task: CloudTask = client.taskOperations().getTask(jobId, job.jobId)
+    toGridscaleState(task.state())
+  }
+
+  def clean(client: BatchClient, job: BatchJob): Unit = {
+    // Clean Pool
+    deletePool(client, poolId)
+    // Clean Storage
+    //TODO: Clean storage
   }
 
   @throws(classOf[BatchErrorException])

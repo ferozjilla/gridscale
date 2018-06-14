@@ -239,4 +239,5 @@ lazy val utilBenchmark = Project(id = "utilbenchmark", base = file("benchmark/ut
 lazy val condorBenchmark = Project(id = "condorbenchmark", base = file("benchmark/condor")) settings (benchmarkSettings: _*) dependsOn (condor, utilBenchmark)
 lazy val pbsBenchmark = Project(id = "pbsbenchmark", base = file("benchmark/pbs")) settings (benchmarkSettings: _*) dependsOn (pbs, utilBenchmark)
 lazy val slurmBenchmark = Project(id = "slurmbenchmark", base = file("benchmark/slurm")) settings (benchmarkSettings: _*) dependsOn (slurm, utilBenchmark)
+lazy val azureBenchmark = Project(id = "azurebenchmark", base = file("benchmark/azure")) settings (benchmarkSettings: _*) dependsOn (azure, utilBenchmark)
 //lazy val diracBenchmark   = Project(id = "diracbenchmark", base = file("benchmark/egi/dirac")) settings (benchmarkSettings: _*) dependsOn (egi, utilBenchmark)
