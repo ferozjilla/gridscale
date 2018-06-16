@@ -160,7 +160,7 @@ lazy val condor = Project(id = "condor", base = file("condor")) settings(dslSett
 lazy val oar = Project(id = "oar", base = file("oar")) settings(dslSettings: _*) dependsOn(gridscale, cluster)
 lazy val sge = Project(id = "sge", base = file("sge")) settings(dslSettings: _*) dependsOn(gridscale, cluster)
 
-lazy val aws = Project(id = "aws", base = file("aws")) settings(dslSettings: _*) dependsOn(gridscale) settings (
+lazy val aws = Project(id = "aws", base = file("aws")) settings(dslSettings: _*) dependsOn(gridscale, cluster) settings (
   libraryDependencies += "com.amazonaws" % "aws-java-sdk"  % "1.11.338"
 )
 
@@ -240,4 +240,5 @@ lazy val condorBenchmark = Project(id = "condorbenchmark", base = file("benchmar
 lazy val pbsBenchmark = Project(id = "pbsbenchmark", base = file("benchmark/pbs")) settings (benchmarkSettings: _*) dependsOn (pbs, utilBenchmark)
 lazy val slurmBenchmark = Project(id = "slurmbenchmark", base = file("benchmark/slurm")) settings (benchmarkSettings: _*) dependsOn (slurm, utilBenchmark)
 lazy val azureBenchmark = Project(id = "azurebenchmark", base = file("benchmark/azure")) settings (benchmarkSettings: _*) dependsOn (azure, utilBenchmark)
+lazy val awsBenchmark = Project(id = "awsbenchmark", base = file("benchmark/aws")) settings (benchmarkSettings: _*) dependsOn (aws, utilBenchmark)
 //lazy val diracBenchmark   = Project(id = "diracbenchmark", base = file("benchmark/egi/dirac")) settings (benchmarkSettings: _*) dependsOn (egi, utilBenchmark)
