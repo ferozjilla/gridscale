@@ -5,10 +5,14 @@ import java.security.InvalidKeyException
 import java.util.Date
 import java.util.concurrent.TimeoutException
 
+import com.microsoft.azure.AzureClient
 import com.microsoft.azure.batch.{ BatchClient, DetailLevel }
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials
 import com.microsoft.azure.batch.protocol.models._
 import com.microsoft.azure.storage.{ CloudStorageAccount, StorageCredentialsAccountAndKey, StorageException, blob }
+
+import gridscale.JobState.Submitted
+import gridscale.cluster.BatchScheduler.BatchJob
 
 package object azure {
 
@@ -75,9 +79,22 @@ package object azure {
 
     // Create object with pool parameters
     val poolAddParameter: PoolAddParameter = new PoolAddParameter()
+      .withEnableAutoScale(true)
+      .withAutoScaleFormula(
+        """startingNumberOfVMs = 1
+          |maxNumberofVMs = 25
+          |pendingTaskSamplePercent = $PendingTasks.GetSamplePercent(180 * TimeInterval_Second)
+          |pendingTaskSamples = if (pendingTaskSamplePercent < 70) {
+          |startingNumberOfVMs
+          |}
+          |else {
+          |avg($PendingTasks.GetSample(180 * TimeInterval_Second))
+          |}
+          |$TargetDedicatedNodes = min(maxNumberofVMs, pendingTaskSamples)")
+        """.stripMargin)
       .withId(poolId)
       .withDisplayName(POOL_NAME)
-      .withTargetDedicatedNodes(config.dedicatedNodes)
+      //.withTargetDedicatedNodes(config.dedicatedNodes)
       .withVmSize(config.vmSize)
       .withVirtualMachineConfiguration(poolVMConfiguration)
 
